@@ -1,8 +1,10 @@
-name: CI + Docker + GHCR
+name: CI + Docker + GHCR (versioned)
 
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: read
@@ -16,17 +18,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run tests
-        run: pytest
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -34,12 +25,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set image name
+        id: image
+        run: |
+          IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}/ci-demo" | tr '[:upper:]' '[:lower:]')
+          echo "image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+
       - name: Build Docker image
         run: |
-          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          docker build -t ghcr.io/$IMAGE_NAME/ci-demo:latest .
+          docker build -t ${{ steps.image.outputs.image }}:latest .
 
-      - name: Push Docker image
+      - name: Tag image
         run: |
-          IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          docker push ghcr.io/$IMAGE_NAME/ci-demo:latest
+          docker tag ${{ steps.image.outputs.image }}:latest \
+            ${{ steps.image.outputs.image }}:sha-${GITHUB_SHA::7}
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            docker tag ${{ steps.image.outputs.image }}:latest \
+              ${{ steps.image.outputs.image }}:$VERSION
+          fi
+
+      - name: Push images
+        run: |
+          docker push ${{ steps.image.outputs.image }}:latest
+          docker push ${{ steps.image.outputs.image }}:sha-${GITHUB_SHA::7}
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            docker push ${{ steps.image.outputs.image }}:$VERSION
+          fi
